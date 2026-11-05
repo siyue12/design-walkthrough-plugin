@@ -219,6 +219,105 @@ function truncatePoint(text, maxChars) {
   return `${cut.trim()}…`;
 }
 
+function cleanPoint(value) {
+  let point = String(value || "")
+    .replace(/^\s*(?:[一二三四五六七八九十]+[、.]|\d+[.、)]|[-•*])\s*/u, "")
+    .replace(/^\s*(?:现象|期望)\s*[:：]\s*/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (point && !/[。！？!?；;…]$/u.test(point)) point += "。";
+  return point;
+}
+
+function splitPointLines(text) {
+  const lines = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const points = [];
+  for (const line of lines) {
+    const numbered = /^\s*(?:\d+[.、)]|[一二三四五六七八九十]+[、.]|[-•*])\s*/u.test(line);
+    if (numbered) {
+      points.push(line);
+      continue;
+    }
+    const sentences = line
+      .split(/(?<=[。；;])/u)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    points.push(...(sentences.length > 0 ? sentences : [line]));
+  }
+  return points.map(cleanPoint).filter(Boolean);
+}
+
+function extractSections(raw) {
+  const phenMatch = /现象\s*[:：]/u.exec(raw);
+  const expMatch = /期望\s*[:：]/u.exec(raw);
+
+  if (phenMatch && expMatch && phenMatch.index < expMatch.index) {
+    return {
+      hasPhen: true,
+      hasExp: true,
+      phen: splitPointLines(raw.slice(phenMatch.index + phenMatch[0].length, expMatch.index)),
+      exp: splitPointLines(raw.slice(expMatch.index + expMatch[0].length)),
+    };
+  }
+  if (expMatch && phenMatch && expMatch.index < phenMatch.index) {
+    return {
+      hasPhen: true,
+      hasExp: true,
+      phen: splitPointLines(raw.slice(phenMatch.index + phenMatch[0].length)),
+      exp: splitPointLines(raw.slice(expMatch.index + expMatch[0].length, phenMatch.index)),
+    };
+  }
+  if (phenMatch) {
+    return {
+      hasPhen: true,
+      hasExp: false,
+      phen: splitPointLines(raw.slice(phenMatch.index + phenMatch[0].length)),
+      exp: [],
+    };
+  }
+  if (expMatch) {
+    return {
+      hasPhen: false,
+      hasExp: true,
+      phen: [],
+      exp: splitPointLines(raw.slice(expMatch.index + expMatch[0].length)),
+    };
+  }
+  return { hasPhen: false, hasExp: false, phen: splitPointLines(raw), exp: [] };
+}
+
+function classifyFlatPoints(points) {
+  const phen = [];
+  const exp = [];
+  const expectationRe =
+    /^(?:期望|建议|应该|需要|修复|调整|补齐|改为|统一|增加|删除|保持|对齐|还原)/u;
+  for (const point of points) {
+    if (expectationRe.test(point)) exp.push(point);
+    else phen.push(point);
+  }
+  if (phen.length === 0) {
+    throw new Error("问题描述缺少「现象」内容，请补充实际看到的问题");
+  }
+  if (exp.length === 0) {
+    exp.push("与 Figma 设计稿/交互说明保持一致。");
+  }
+  return { phen, exp };
+}
+
+function formatSection(label, points, options) {
+  const cleaned = points
+    .map(cleanPoint)
+    .filter(Boolean)
+    .slice(0, options.maxPointsPerSection)
+    .map((point) => truncatePoint(point, options.maxCharsPerPoint));
+  if (cleaned.length === 0) return null;
+  return `${label}：\n${cleaned.map((point, index) => `${index + 1}. ${point}`).join("\n")}`;
+}
+
 function formatDescription(value, config) {
   const raw = String(value || "")
     .replace(/\r\n?/g, "\n")
@@ -226,38 +325,41 @@ function formatDescription(value, config) {
   if (!raw) throw new Error("问题描述不能为空");
 
   const options = {
-    maxPoints: config?.walkthrough?.description?.maxPoints ?? 5,
+    maxPointsPerSection: config?.walkthrough?.description?.maxPointsPerSection ?? 3,
     maxCharsPerPoint: config?.walkthrough?.description?.maxCharsPerPoint ?? 100,
-    maxTotalChars: config?.walkthrough?.description?.maxTotalChars ?? 600,
+    maxTotalChars: config?.walkthrough?.description?.maxTotalChars ?? 800,
   };
 
-  let lines = raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  let sections = extractSections(raw);
 
-  // 单段长文本按句号/分号拆成要点，避免整段写进飞书。
-  if (lines.length === 1) {
-    lines = lines[0]
-      .split(/(?<=[。；;])/u)
-      .map((line) => line.trim())
-      .filter(Boolean);
+  if (!sections.hasPhen && !sections.hasExp) {
+    // 完全扁平：按语义分到现象/期望，避免同一条要点重复出现在两段。
+    const flat = classifyFlatPoints(sections.phen);
+    sections = { ...sections, phen: flat.phen, exp: flat.exp };
+  } else if (!sections.hasExp) {
+    // 只有「现象：」：把其中的建议类要点分到期望。
+    const flat = classifyFlatPoints(sections.phen);
+    sections = { ...sections, phen: flat.phen, exp: flat.exp };
+  } else if (!sections.hasPhen) {
+    // 只有「期望：」：尝试从期望内容里分离出现象；分不出就报错。
+    const flat = classifyFlatPoints(sections.exp);
+    sections = { ...sections, phen: flat.phen, exp: flat.exp };
+  } else {
+    if (sections.phen.length === 0) {
+      throw new Error("问题描述缺少「现象」内容，请补充实际看到的问题");
+    }
+    if (sections.exp.length === 0) {
+      sections.exp = ["与 Figma 设计稿/交互说明保持一致。"];
+    }
   }
 
-  const points = lines
-    .map((line) =>
-      line
-        .replace(/^\s*(?:[一二三四五六七八九十]+[、.]|\d+[.、)]|[-•*])\s*/u, "")
-        .replace(/\s+/g, " ")
-        .trim(),
-    )
-    .filter(Boolean)
-    .slice(0, options.maxPoints)
-    .map((line) => truncatePoint(line, options.maxCharsPerPoint));
+  const parts = [
+    formatSection("现象", sections.phen, options),
+    formatSection("期望", sections.exp, options),
+  ].filter(Boolean);
 
-  if (points.length === 0) throw new Error("问题描述格式化后为空");
-
-  const formatted = points.map((point, index) => `${index + 1}. ${point}`).join("\n");
+  const formatted = parts.join("\n\n");
+  if (!formatted) throw new Error("问题描述格式化后为空");
   return formatted.length <= options.maxTotalChars
     ? formatted
     : `${formatted.slice(0, options.maxTotalChars - 1)}…`;

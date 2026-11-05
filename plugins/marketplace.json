@@ -4,7 +4,7 @@
     {
       "name": "design-walkthrough",
       "source": "./design-walkthrough",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "读取 Figma 设计稿与交互说明，对比前端页面，截图问题并通过飞书 CLI 登记到多维表格",
       "displayName": "设计走查登记",
       "displayName_i18n": {

@@ -29,9 +29,9 @@
       "height": 914
     },
     "description": {
-      "maxPoints": 5,
+      "maxPointsPerSection": 3,
       "maxCharsPerPoint": 100,
-      "maxTotalChars": 600
+      "maxTotalChars": 800
     },
     "screenshotDir": ".walkthrough/shots",
     "reportDir": ".walkthrough/reports"

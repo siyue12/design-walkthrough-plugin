@@ -58,7 +58,7 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
       "module": "页面/模块",
       "types": ["交互体验"],
       "severity": "P1",
-      "description": "1. 现象...\n2. 影响/复现...\n3. 期望...",
+      "description": "现象：\n1. ...\n2. ...\n\n期望：\n1. ...\n2. ...",
       "version": "v1.0 走查第1轮",
       "notes": "Figma node / 前端选择器 / 证据",
       "screenshots": ["/绝对路径/问题截图.png"]
@@ -71,12 +71,24 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 
 ### 问题描述格式
 
-写入飞书前，脚本会自动把「问题描述」整理成序号分点：
+写入飞书前，脚本会自动把「问题描述」整理成固定两段：
 
-- 用 `1. 2. 3.` 分点，2~4 点为宜，最多 5 点。
-- 每点一个核心事实，单点建议 ≤60 字，最多 100 字。
-- 单段长文本会按句号/分号拆点；超长内容会截断并加省略号。
-- 可在 `config/feishu.json` 的 `walkthrough.description` 调整 `maxPoints` / `maxCharsPerPoint` / `maxTotalChars`。
+```text
+现象：
+1. ...
+2. ...
+3. ...
+
+期望：
+1. ...
+2. ...
+3. ...
+```
+
+- 每段 1~3 点，单点建议 ≤60 字，最多 100 字。
+- 每点一个核心事实；不要写长段落。
+- 只给一串要点时，脚本会把「建议/应该/补齐/调整」类要点分到期望段，并补一个默认期望。
+- 可在 `config/feishu.json` 的 `walkthrough.description` 调整 `maxPointsPerSection` / `maxCharsPerPoint` / `maxTotalChars`。
 
 ## 安全与边界
 
