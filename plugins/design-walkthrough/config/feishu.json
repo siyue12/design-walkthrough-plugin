@@ -1,0 +1,39 @@
+{
+  "feishu": {
+    "baseToken": "REMOVED",
+    "tableId": "REMOVED",
+    "baseUrl": "https://REMOVED.feishu.cn/base/REMOVED",
+    "larkCliPath": "~/.zcode/tools/lark-cli/node_modules/.bin/lark-cli",
+    "defaultVersion": "v1.0 走查第1轮",
+    "reporterOpenId": null,
+    "fieldNames": {
+      "title": "问题标题",
+      "module": "走查页面/模块",
+      "types": "问题类型",
+      "severity": "严重程度",
+      "description": "问题描述",
+      "screenshot": "问题截图",
+      "version": "版本/批次",
+      "reporter": "提出人",
+      "reportDate": "提出日期",
+      "status": "状态",
+      "assignee": "负责人",
+      "notes": "备注",
+      "fixNote": "修复说明",
+      "verify": "复验结果"
+    }
+  },
+  "walkthrough": {
+    "viewport": {
+      "width": 1440,
+      "height": 914
+    },
+    "description": {
+      "maxPoints": 5,
+      "maxCharsPerPoint": 100,
+      "maxTotalChars": 600
+    },
+    "screenshotDir": ".walkthrough/shots",
+    "reportDir": ".walkthrough/reports"
+  }
+}
