@@ -1,13 +1,26 @@
 {
   "issues": [
     {
-      "title": "【dry-run 示例】互联网服务标题 22 项但设计稿只有 18 个按钮",
-      "module": "CSR 工作台 / 互联网服务",
+      "title": "【dry-run 示例】顶部 Tab 比基线多 1 个",
+      "module": "示例页 / 顶部导航",
+      "baselineRef": "B01 / node 12:34",
       "types": ["视觉还原"],
-      "severity": "P0",
-      "description": "现象：\n1. 分类标题显示 22 项，但 Figma 只有 18 个按钮（6×3），缺 4 个。\n2. 区块高度只容纳 3 行，第 4 行放不下。\n\n期望：\n1. 补齐 4 个按钮并调整高度。\n2. 或修正计数，保证与设计稿一致。",
+      "severity": "P2",
+      "description": "现象：\n1. 基线 B01 定义 2 个 Tab（HOME、列表），实际渲染 3 个，多出「设置」。\n2. 多出的 Tab 没有对应内容区。\n\n期望：\n1. 按 B01 隐藏或移除「设置」Tab。\n2. Tab 顺序恢复为 HOME → 列表。",
       "version": "v1.0 走查第1轮",
-      "notes": "Figma node 1095:85178；示例数据，仅用于 dry-run，不写入",
+      "notes": "B01 / node 12:34；示例数据，仅用于 dry-run，不写入",
+      "screenshots": []
+    }
+  ],
+  "pending": [
+    {
+      "title": "【dry-run 示例】卡片 hover 态未定义",
+      "module": "示例页 / 卡片",
+      "missingRule": "设计稿未定义卡片 hover 时的阴影、位移或描边变化。",
+      "impact": "hover 态无法判定是否还原。",
+      "baselineRef": "node 12:50（卡片网格）",
+      "version": "v1.0 走查第1轮",
+      "notes": "示例数据，仅用于 dry-run，不写入",
       "screenshots": []
     }
   ]

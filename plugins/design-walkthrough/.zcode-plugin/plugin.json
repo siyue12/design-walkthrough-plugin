@@ -1,7 +1,7 @@
 {
   "name": "design-walkthrough",
-  "version": "0.1.2",
-  "description": "读取 Figma 设计稿与交互说明，对比前端页面，截图问题并通过飞书 CLI 登记到多维表格",
+  "version": "0.1.4",
+  "description": "读取当次 Figma 设计稿建立基线，逐条对比前端实现值，登记走查问题与待确认项到飞书多维表格",
   "author": {
     "name": "TIM"
   },

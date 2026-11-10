@@ -13,6 +13,7 @@
       "severity": "严重程度",
       "description": "问题描述",
       "screenshot": "问题截图",
+      "solutionScreenshot": "解决方案截图",
       "version": "版本/批次",
       "reporter": "提出人",
       "reportDate": "提出日期",
@@ -21,12 +22,50 @@
       "notes": "备注",
       "fixNote": "修复说明",
       "verify": "复验结果"
+    },
+    "pending": {
+      "tableName": "待确认项",
+      "tableId": null,
+      "statusDefault": "待设计补充",
+      "tableFields": [
+        { "name": "待确认项标题", "type": "text" },
+        { "name": "走查页面/模块", "type": "text" },
+        { "name": "缺失的规则", "type": "text" },
+        { "name": "影响范围", "type": "text" },
+        { "name": "Figma 依据", "type": "text" },
+        {
+          "name": "状态",
+          "type": "select",
+          "multiple": false,
+          "options": [
+            { "name": "待设计补充" },
+            { "name": "已补充" },
+            { "name": "确认无需定义" }
+          ]
+        },
+        { "name": "版本/批次", "type": "text" },
+        { "name": "提出日期", "type": "date" },
+        { "name": "问题截图", "type": "attachment" },
+        { "name": "备注", "type": "text" }
+      ],
+      "fieldNames": {
+        "title": "待确认项标题",
+        "module": "走查页面/模块",
+        "missingRule": "缺失的规则",
+        "impact": "影响范围",
+        "baselineRef": "Figma 依据",
+        "status": "状态",
+        "version": "版本/批次",
+        "reportDate": "提出日期",
+        "screenshot": "问题截图",
+        "notes": "备注"
+      }
     }
   },
   "walkthrough": {
     "viewport": {
       "width": 1440,
-      "height": 914
+      "height": 900
     },
     "description": {
       "maxPointsPerSection": 3,

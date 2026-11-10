@@ -64,6 +64,18 @@ function loadConfig() {
   for (const key of required) {
     if (!feishu[key]) throw new Error(`config/feishu.json 缺少 feishu.${key}`);
   }
+  const pending = feishu.pending || {};
+  for (const key of ["tableName", "tableFields", "fieldNames"]) {
+    if (!pending[key]) throw new Error(`config/feishu.json 缺少 feishu.pending.${key}`);
+  }
+  if (!Array.isArray(pending.tableFields) || pending.tableFields.length === 0) {
+    throw new Error("config/feishu.json 的 feishu.pending.tableFields 必须是非空数组");
+  }
+  if (!pending.fieldNames.title || !pending.fieldNames.missingRule || !pending.fieldNames.status) {
+    throw new Error(
+      "config/feishu.json 的 feishu.pending.fieldNames 至少需要 title / missingRule / status",
+    );
+  }
   feishu.larkCliPath = process.env.LARK_CLI || expandHome(feishu.larkCliPath);
   if (!existsSync(feishu.larkCliPath)) {
     throw new Error(
@@ -77,10 +89,13 @@ function loadConfig() {
 function usage() {
   console.error(`用法：
   node register-walkthrough.mjs --input draft.json [--select 1,3,5|all] [--dry-run] [--yes] [--allow-duplicate]
+  node register-walkthrough.mjs --ensure-pending-table [--dry-run] [--yes]
   node register-walkthrough.mjs --update-record <record_id> [--status 待验证] [--assignee ou_xxx] [--fix-note "..."] [--verify 通过] [--note "..."] [--yes]
 
 默认是 dry-run；只有 --yes 才会真正写入飞书。
---select 用编号菜单选择要登记的条目，例如 --select 1,3,5；不传或 all 表示全部。`);
+--select 用编号菜单选择要登记的条目，例如 --select 1,3,5；不传或 all 表示全部。
+草稿里的 issues 写入「走查问题登记」表，pending 写入「待确认项」表。
+--ensure-pending-table 只查找/创建「待确认项」表，打印 tableId；--yes 时才真正建表。`);
 }
 
 function parseArgs(argv) {
@@ -90,6 +105,7 @@ function parseArgs(argv) {
     allowDuplicate: false,
     input: null,
     select: null,
+    ensurePendingTable: false,
     updateRecord: null,
     status: null,
     assignee: null,
@@ -104,6 +120,7 @@ function parseArgs(argv) {
     else if (a === "--yes") args.yes = true;
     else if (a === "--allow-duplicate") args.allowDuplicate = true;
     else if (a === "--select") args.select = argv[++i];
+    else if (a === "--ensure-pending-table") args.ensurePendingTable = true;
     else if (a === "--update-record") args.updateRecord = argv[++i];
     else if (a === "--status") args.status = argv[++i];
     else if (a === "--assignee") args.assignee = argv[++i];
@@ -162,6 +179,22 @@ function findRecordId(value) {
   } else if (value && typeof value === "object") {
     for (const item of Object.values(value)) {
       const found = findRecordId(item);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findTableId(value) {
+  if (typeof value === "string" && /^tbl[a-zA-Z0-9]+$/.test(value)) return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findTableId(item);
+      if (found) return found;
+    }
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      const found = findTableId(item);
       if (found) return found;
     }
   }
@@ -368,13 +401,18 @@ function formatDescription(value, config) {
 function normalizeIssue(issue, config, cwd) {
   const title = String(issue.title || issue["问题标题"] || "").trim();
   const module = String(issue.module || issue["走查页面/模块"] || "").trim();
+  const baselineRef = String(issue.baselineRef || issue["基线依据"] || "").trim();
   const description = formatDescription(issue.description || issue["问题描述"], config);
   if (!title) throw new Error("问题缺少 title（问题标题）");
   if (!module) throw new Error(`问题「${title}」缺少 module（走查页面/模块）`);
+  if (!baselineRef) {
+    throw new Error(`问题「${title}」缺少 baselineRef（B 编号 + node id），不允许登记`);
+  }
   if (!description) throw new Error(`问题「${title}」缺少 description（问题描述）`);
   return {
     title,
     module,
+    baselineRef,
     description,
     types: normalizeTypes(issue.types || issue["问题类型"]),
     severity: normalizeSeverity(issue.severity || issue["严重程度"]),
@@ -390,14 +428,174 @@ function fieldNames(config) {
   return config.feishu.fieldNames;
 }
 
-function loadFields(config) {
+function pendingConfig(config) {
+  return config.feishu.pending;
+}
+
+function pendingFieldNames(config) {
+  return pendingConfig(config).fieldNames;
+}
+
+function normalizePendingStatus(config, value) {
+  const P = pendingConfig(config);
+  const raw = String(value || P.statusDefault || "待设计补充").trim();
+  const allowed = new Set(
+    (P.tableFields.find((field) => field.name === P.fieldNames.status)?.options || []).map(
+      (option) => option.name,
+    ),
+  );
+  if (allowed.size > 0 && !allowed.has(raw)) {
+    throw new Error(`待确认项状态「${raw}」不可用；可选：${[...allowed].join("、")}`);
+  }
+  return raw;
+}
+
+function normalizePending(item, config, cwd) {
+  const P = pendingConfig(config);
+  const title = String(item.title || item[P.fieldNames.title] || "").trim();
+  const module = String(item.module || item[P.fieldNames.module] || "").trim();
+  const missingRule = String(item.missingRule || item[P.fieldNames.missingRule] || "").trim();
+  if (!title) throw new Error("待确认项缺少 title（待确认项标题）");
+  if (!module) throw new Error(`待确认项「${title}」缺少 module（走查页面/模块）`);
+  if (!missingRule) throw new Error(`待确认项「${title}」缺少 missingRule（缺失的规则）`);
+  return {
+    title,
+    module,
+    missingRule,
+    impact: String(item.impact || item[P.fieldNames.impact] || "").trim(),
+    baselineRef: String(item.baselineRef || item[P.fieldNames.baselineRef] || "").trim(),
+    notes: String(item.notes || item[P.fieldNames.notes] || "").trim(),
+    version: String(item.version || item[P.fieldNames.version] || config.feishu.defaultVersion || ""),
+    status: normalizePendingStatus(config, item.status || item[P.fieldNames.status]),
+    screenshots: resolveScreenshots(item.screenshots, cwd),
+  };
+}
+
+function listTables(config) {
+  const res = runLark(config.feishu.larkCliPath, [
+    "base",
+    "+table-list",
+    "--base-token",
+    config.feishu.baseToken,
+    "--format",
+    "json",
+  ]);
+  if (!res.ok) throw new Error(`读取飞书数据表失败：${JSON.stringify(res).slice(0, 1000)}`);
+  return res?.data?.tables || [];
+}
+
+/**
+ * 找到「待确认项」表；配置了 tableId 就直接用，否则按表名查找，找不到时在 create 模式下建表。
+ * 表结构来自 config.feishu.pending.tableFields，不依赖任何外部记录。
+ */
+function resolvePendingTable(config, { create }) {
+  const P = pendingConfig(config);
+  if (P.tableId) {
+    return { tableId: P.tableId, tableName: P.tableName, source: "config", created: false };
+  }
+
+  const existing = listTables(config).find((table) => table.name === P.tableName);
+  if (existing) {
+    return { tableId: existing.id, tableName: P.tableName, source: "existing", created: false };
+  }
+
+  if (!create) {
+    return {
+      tableId: null,
+      tableName: P.tableName,
+      source: "missing",
+      created: false,
+      willCreate: true,
+      tableFields: P.tableFields,
+    };
+  }
+
+  const res = runLark(config.feishu.larkCliPath, [
+    "base",
+    "+table-create",
+    "--base-token",
+    config.feishu.baseToken,
+    "--name",
+    P.tableName,
+    "--fields",
+    JSON.stringify(P.tableFields),
+    "--format",
+    "json",
+  ]);
+  if (!res.ok) throw new Error(`创建「${P.tableName}」表失败：${JSON.stringify(res).slice(0, 1200)}`);
+  const tableId = findTableId(res);
+  if (!tableId) {
+    throw new Error(`建表成功但未找到 table_id：${JSON.stringify(res).slice(0, 1200)}`);
+  }
+  return { tableId, tableName: P.tableName, source: "created", created: true };
+}
+
+function buildPendingPayload(item, config, fieldsByName) {
+  const F = pendingFieldNames(config);
+  for (const key of ["title", "module", "missingRule", "status", "version", "reportDate"]) {
+    if (!F[key]) throw new Error(`config/feishu.json 缺少 feishu.pending.fieldNames.${key}`);
+    assertField(fieldsByName, F[key]);
+  }
+  assertSelect(fieldsByName, F.status, [item.status]);
+
+  const payload = {
+    [F.title]: item.title,
+    [F.module]: item.module,
+    [F.missingRule]: item.missingRule,
+    [F.status]: [item.status],
+    [F.version]: item.version,
+    [F.reportDate]: today(),
+  };
+  if (item.impact) payload[F.impact] = item.impact;
+  if (item.baselineRef) payload[F.baselineRef] = item.baselineRef;
+  if (item.notes) payload[F.notes] = item.notes;
+  return payload;
+}
+
+function searchDuplicatePendings(config, tableId, item) {
+  const F = pendingFieldNames(config);
+  try {
+    const res = runLark(config.feishu.larkCliPath, [
+      "base",
+      "+record-search",
+      "--base-token",
+      config.feishu.baseToken,
+      "--table-id",
+      tableId,
+      "--keyword",
+      item.title.slice(0, 20),
+      "--search-field",
+      F.title,
+      "--search-field",
+      F.missingRule,
+      "--limit",
+      "20",
+      "--format",
+      "json",
+    ]);
+    const d = res?.data;
+    if (!d || !Array.isArray(d.data) || !Array.isArray(d.fields)) return [];
+    const idx = d.fields.indexOf(F.title);
+    if (idx < 0) return [];
+    const normalized = (s) => String(s || "").replace(/\s+/g, "").toLowerCase();
+    return d.data
+      .map((row) => String(row[idx] ?? ""))
+      .filter((title) => title && normalized(title) === normalized(item.title));
+  } catch (error) {
+    throw new Error(`待确认项查重失败：${error.message}`);
+  }
+}
+
+
+
+function loadFields(config, tableId = config.feishu.tableId) {
   const res = runLark(config.feishu.larkCliPath, [
     "base",
     "+field-list",
     "--base-token",
     config.feishu.baseToken,
     "--table-id",
-    config.feishu.tableId,
+    tableId,
     "--format",
     "json",
   ]);
@@ -451,6 +649,7 @@ function buildPayload(issue, config, fieldsByName, reporterOpenId) {
   assertField(fieldsByName, F.version);
   assertField(fieldsByName, F.reportDate);
   assertField(fieldsByName, F.status);
+  assertField(fieldsByName, F.notes);
 
   assertSelect(fieldsByName, F.types, issue.types);
   assertSelect(fieldsByName, F.severity, [issue.severity]);
@@ -467,6 +666,12 @@ function buildPayload(issue, config, fieldsByName, reporterOpenId) {
     [F.status]: [issue.status],
   };
   if (issue.notes) payload[F.notes] = issue.notes;
+  const baselineNote = `基线：${issue.baselineRef}`;
+  if (!String(payload[F.notes] || "").includes(issue.baselineRef)) {
+    payload[F.notes] = payload[F.notes]
+      ? `${payload[F.notes]}；${baselineNote}`
+      : baselineNote;
+  }
   if (reporterOpenId) payload[F.reporter] = [{ id: reporterOpenId }];
   if (issue.assigneeOpenId) payload[F.assignee] = [{ id: issue.assigneeOpenId }];
   return payload;
@@ -538,14 +743,14 @@ function searchDuplicates(config, issue) {
   }
 }
 
-function createRecord(config, payload) {
+function createRecord(config, payload, tableId = config.feishu.tableId) {
   const res = runLark(config.feishu.larkCliPath, [
     "base",
     "+record-upsert",
     "--base-token",
     config.feishu.baseToken,
     "--table-id",
-    config.feishu.tableId,
+    tableId,
     "--format",
     "json",
     "--json",
@@ -559,16 +764,16 @@ function createRecord(config, payload) {
 
 const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 
-async function uploadScreenshots(config, recordId, files) {
+async function uploadScreenshots(config, recordId, files, tableId = config.feishu.tableId) {
   if (!files.length) return { ok: true, files: [] };
-  const F = fieldNames(config);
+  const F = tableId === config.feishu.tableId ? fieldNames(config) : pendingFieldNames(config);
   const args = [
     "base",
     "+record-upload-attachment",
     "--base-token",
     config.feishu.baseToken,
     "--table-id",
-    config.feishu.tableId,
+    tableId,
     "--record-id",
     recordId,
     "--field-id",
@@ -592,11 +797,11 @@ async function uploadScreenshots(config, recordId, files) {
   throw lastError;
 }
 
-function recordUrl(config, recordId) {
+function recordUrl(config, recordId, tableId = config.feishu.tableId) {
   const base = config.feishu.baseUrl || "";
   if (!base) return null;
   const sep = base.includes("?") ? "&" : "?";
-  return `${base}${sep}table=${config.feishu.tableId}&record=${recordId}`;
+  return `${base}${sep}table=${tableId}&record=${recordId}`;
 }
 
 function print(obj) {
@@ -606,10 +811,35 @@ function print(obj) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const config = loadConfig();
+  const mode = args.yes ? "write" : "dry-run";
+
+  if (args.ensurePendingTable) {
+    const info = resolvePendingTable(config, { create: mode === "write" });
+    if (info.tableId && mode === "write") {
+      const expected = pendingConfig(config).tableFields.map((field) => field.name);
+      const actual = new Set(
+        info.created
+          ? expected
+          : loadFields(config, info.tableId).map((field) => field.name),
+      );
+      const missingFields = expected.filter((name) => !actual.has(name));
+      print({
+        ok: missingFields.length === 0,
+        mode,
+        action: "ensure-pending-table",
+        ...info,
+        missingFields,
+      });
+      if (missingFields.length > 0) process.exitCode = 3;
+      return;
+    }
+    print({ ok: true, mode, action: "ensure-pending-table", ...info });
+    return;
+  }
+
   const fields = loadFields(config);
   const fieldsByName = new Map(fields.map((field) => [field.name, field]));
   const reporterOpenId = getReporterOpenId(config);
-  const mode = args.yes ? "write" : "dry-run";
 
   if (args.updateRecord) {
     const payload = buildUpdatePayload(args, config, fieldsByName);
@@ -641,14 +871,22 @@ async function main() {
   }
 
   const draft = JSON.parse(readFileSync(resolve(args.input), "utf8"));
-  const rawIssues = Array.isArray(draft.issues) ? draft.issues : [draft];
+  const hasArrays = Array.isArray(draft.issues) || Array.isArray(draft.pending);
+  const rawIssues = Array.isArray(draft.issues) ? draft.issues : hasArrays ? [] : [draft];
+  const rawPending = Array.isArray(draft.pending) ? draft.pending : [];
+  if (rawIssues.length === 0 && rawPending.length === 0) {
+    throw new Error("草稿里没有 issues 或 pending 条目");
+  }
+
   const issues = rawIssues.map((issue) => normalizeIssue(issue, config, process.cwd()));
-  const results = [];
+  const pendings = rawPending.map((item) => normalizePending(item, config, process.cwd()));
+  const issueResults = [];
+  const pendingResults = [];
 
   for (const issue of issues) {
     const duplicates = searchDuplicates(config, issue);
     if (duplicates.length > 0 && !args.allowDuplicate) {
-      results.push({
+      issueResults.push({
         title: issue.title,
         mode,
         duplicate: true,
@@ -660,7 +898,7 @@ async function main() {
 
     const payload = buildPayload(issue, config, fieldsByName, reporterOpenId);
     if (mode === "dry-run") {
-      results.push({
+      issueResults.push({
         title: issue.title,
         mode,
         duplicate: duplicates.length > 0,
@@ -678,7 +916,7 @@ async function main() {
     } catch (error) {
       uploadError = error.message;
     }
-    results.push({
+    issueResults.push({
       title: issue.title,
       mode,
       duplicate: duplicates.length > 0,
@@ -690,12 +928,92 @@ async function main() {
     });
   }
 
-  const failed = results.some((result) => result.uploadError);
+  let pendingTable = null;
+  if (pendings.length > 0) {
+    // 配置了 tableId 就直接用；否则按表名查找；--yes 时找不到才按 config 里的 schema 建表。
+    pendingTable = resolvePendingTable(config, { create: mode === "write" });
+
+    if (!pendingTable.tableId) {
+      for (const item of pendings) {
+        pendingResults.push({
+          title: item.title,
+          mode,
+          willCreateTable: true,
+          tableName: pendingTable.tableName,
+          tableFields: pendingTable.tableFields,
+          screenshots: item.screenshots,
+          note: "本次为 dry-run；--yes 时才会创建该表并写入",
+        });
+      }
+    } else {
+      // 刚建表时直接使用配置里的 schema，避免建表后立即读取字段遇到异步延迟。
+      const pendingFields = pendingTable.created
+        ? pendingConfig(config).tableFields.map((field) => ({
+            name: field.name,
+            type: field.type,
+            options: field.options || [],
+          }))
+        : loadFields(config, pendingTable.tableId);
+      const pendingFieldsByName = new Map(pendingFields.map((field) => [field.name, field]));
+
+      for (const item of pendings) {
+        // 刚建的表不可能有重复记录，跳过检索，避免建表后索引未就绪。
+        const duplicates = pendingTable.created
+          ? []
+          : searchDuplicatePendings(config, pendingTable.tableId, item);
+        if (duplicates.length > 0 && !args.allowDuplicate) {
+          pendingResults.push({
+            title: item.title,
+            mode,
+            duplicate: true,
+            duplicates,
+            note: "待确认项已存在同名条目；如确认要重复登记，加 --allow-duplicate",
+          });
+          continue;
+        }
+
+        const payload = buildPendingPayload(item, config, pendingFieldsByName);
+        if (mode === "dry-run") {
+          pendingResults.push({
+            title: item.title,
+            mode,
+            duplicate: duplicates.length > 0,
+            payload,
+            screenshots: item.screenshots,
+            tableId: pendingTable.tableId,
+          });
+          continue;
+        }
+
+        const recordId = createRecord(config, payload, pendingTable.tableId);
+        let upload = null;
+        let uploadError = null;
+        try {
+          upload = await uploadScreenshots(config, recordId, item.screenshots, pendingTable.tableId);
+        } catch (error) {
+          uploadError = error.message;
+        }
+        pendingResults.push({
+          title: item.title,
+          mode,
+          duplicate: duplicates.length > 0,
+          recordId,
+          recordUrl: recordUrl(config, recordId, pendingTable.tableId),
+          screenshots: item.screenshots,
+          upload,
+          uploadError,
+        });
+      }
+    }
+  }
+
+  const failed = [...issueResults, ...pendingResults].some((result) => result.uploadError);
   print({
     ok: !failed,
     mode,
-    count: results.length,
-    results,
+    count: issueResults.length + pendingResults.length,
+    pendingTable,
+    results: { issues: issueResults, pending: pendingResults },
   });
   if (failed) process.exitCode = 2;
 }
