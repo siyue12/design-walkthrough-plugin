@@ -19,12 +19,15 @@ description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到
 1. **飞书 CLI**
    ```bash
    LARK="$HOME/.zcode/tools/lark-cli/node_modules/.bin/lark-cli"
+   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+   BASE_TOKEN=$(jq -r '.feishu.baseToken' "$PLUGIN_ROOT/config/feishu.json")
    "$LARK" auth status
-   "$LARK" base +table-list --base-token REMOVED
+   "$LARK" base +table-list --base-token "$BASE_TOKEN"
    ```
    - `auth status` 里 `identities.user.available` 必须为 true。
    - 如果 `needs_refresh`，调用一次 base 命令会自动刷新；失败则运行 `"$LARK" auth login`，把 QR/链接给用户扫码。
-   - 主表：Base `REMOVED`，Table `REMOVED`（走查问题登记）。
+   - 主表：以 `config/feishu.json` 的 `feishu.baseToken` / `feishu.tableId` 为准；每个项目配置自己的走查表，插件不写死任何 Base/Table。
+   - 读取主表字段：用 `lark-cli api GET /open-apis/bitable/v1/apps/<baseToken>/tables/<tableId>/fields --params '{"page_size":100}'`，按 `data.items[].field_name` 记录表头顺序；后续「问题登记清单」按该顺序输出。
    - 待确认表：同 Base 的「待确认项」，表名和字段 schema 定义在 `config/feishu.json` 的 `feishu.pending`；不存在时由脚本按该 schema 创建。
 
 2. **Figma**
@@ -373,14 +376,25 @@ description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到
 - `status`：默认 `待设计补充`，可选 `已补充` / `确认无需定义`。
 - `screenshots`：可选。
 
-在聊天里给用户两张表。
+### 问题登记清单表头（按目标表动态生成）
 
-候选问题：
+审核时给用户的「问题登记清单」必须严格按**本次配置表**的实际表头顺序输出，字段名与飞书表一致，不得增删列、重排或改名。插件是通用的，不写死任何表的列顺序。
 
-| # | 模块 | 问题 | 基线依据 | 类型 | 严重程度 | 截图 |
-|---|---|---|---|---|---|---|
+- 顺序来源：每次走查开始时，按 `config/feishu.json` 的 `feishu.baseToken` / `feishu.tableId` 调 `lark-cli api GET /open-apis/bitable/v1/apps/<baseToken>/tables/<tableId>/fields --params '{"page_size":100}'`，取 `data.items[].field_name` 的顺序。
+- **不要用 `+field-list` 的顺序，它每次返回都不稳定**；也不要照抄其他项目的表头。
+- `config/feishu.json` 的 `feishu.fieldOrder` 只是该项目的兜底记录；与实时顺序不一致时，以实时顺序为准并更新配置。默认顺序为：问题标题 → 问题编号 → 版本/批次 → 走查页面/模块 → 问题描述 → 问题截图 → 解决方案截图 → 问题类型 → 严重程度 → 状态 → 提出人 → 提出日期 → 负责人 → 计划修复日期 → 修复说明 → 复验结果 → 备注。
+- 未产生值的字段按默认填：`问题编号` = `系统生成`；`提出人` = 当前登录用户；`提出日期` = 今天（YYYY-MM-DD）；`状态` = `待处理`；`负责人` / `计划修复日期` / `解决方案截图` / `修复说明` / `复验结果` = `—`。
+- `问题描述` 单元格内用 `<br>` 分行，保持「现象：」「期望：」两段和序号要点，不得压成一段。
+- `问题截图` 填本地绝对路径；多张按「现象」点顺序用 `<br>` 分隔。
+- `备注` 放 `baselineRef`、Figma node、前端选择器等证据。
+- 已登记记录的清单同样按当前表的顺序输出。
 
-待确认项：
+问题登记清单（表头 = 本次读取的字段顺序）：
+
+| <字段1> | <字段2> | <字段3> | ... |
+|---|---|---|---|
+
+待确认项（字段顺序沿用待确认表）：
 
 | # | 模块 | 缺失的规则 | 影响 | 基线依据 |
 |---|---|---|---|---|
@@ -459,6 +473,7 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 - **不碰业务字段**：业务字段以前端页面为准；只比较布局和交互。
 - **不动用户浏览器**：不关闭/重开用户 Chrome 标签页，不读取用户 cookie/localStorage。
 - **不猜**：Figma Frame、前端 URL、版本/批次不明确就问。
+- **表头不写死**：清单列顺序每次按目标表实时读取（fields API），不照抄模板表或其他项目。
 - **字段自检**：`register-walkthrough.mjs` 会读 `+field-list` 校验字段和选项；失败时按报错修正，不要绕过。
 - **示例记录**：表里已有 `NO.001` 示例记录，未经确认不删除、不修改。
 
@@ -474,7 +489,7 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 - 视口：1440×900
 - 设计基线：N 条（Figma M 条 / 用户补充 K 条）
 - 差集：一致 x / 偏差 y / 待确认 z
-- 候选问题：N 条（P0 x，P1 x，P2 x，P3 x）
+- 候选问题：N 条（P0 x，P1 x，P2 x，P3 x；清单表头按目标表实际字段顺序）
 
 已验证写操作：
 - 提交/保存：<通过 / 有问题>  <截图路径>
@@ -499,3 +514,5 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 ```
 
 如果页面打不开、登录失败、字段不匹配，明确说明卡点和下一步，不要用「已完成」概括。
+
+候选问题清单必须按目标表本次实际读取的表头顺序输出，不写死列、不照抄其他项目。

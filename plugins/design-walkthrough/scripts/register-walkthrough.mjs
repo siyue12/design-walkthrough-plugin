@@ -428,6 +428,46 @@ function fieldNames(config) {
   return config.feishu.fieldNames;
 }
 
+// 按目标表的实际字段顺序重排 payload，保证 dry-run / 日志里的字段顺序与表头一致。
+// 顺序优先取实时 fields API；`+field-list` 的返回顺序不稳定，不能用来排表头。
+const fieldOrderCache = new Map();
+
+function loadFieldOrder(config, tableId = config.feishu.tableId) {
+  if (fieldOrderCache.has(tableId)) return fieldOrderCache.get(tableId);
+  let order = [];
+  try {
+    const res = runLark(config.feishu.larkCliPath, [
+      "api",
+      "GET",
+      `/open-apis/bitable/v1/apps/${config.feishu.baseToken}/tables/${tableId}/fields`,
+      "--params",
+      '{"page_size":100}',
+    ]);
+    if (Array.isArray(res?.data?.items)) {
+      order = res.data.items.map((item) => item.field_name).filter(Boolean);
+    }
+  } catch {
+    order = [];
+  }
+  if (order.length === 0 && Array.isArray(config.feishu.fieldOrder)) {
+    order = config.feishu.fieldOrder;
+  }
+  fieldOrderCache.set(tableId, order);
+  return order;
+}
+
+function orderPayload(payload, order) {
+  if (!Array.isArray(order) || order.length === 0) return payload;
+  const ordered = {};
+  for (const name of order) {
+    if (Object.hasOwn(payload, name)) ordered[name] = payload[name];
+  }
+  for (const [name, value] of Object.entries(payload)) {
+    if (!Object.hasOwn(ordered, name)) ordered[name] = value;
+  }
+  return ordered;
+}
+
 function pendingConfig(config) {
   return config.feishu.pending;
 }
@@ -674,7 +714,7 @@ function buildPayload(issue, config, fieldsByName, reporterOpenId) {
   }
   if (reporterOpenId) payload[F.reporter] = [{ id: reporterOpenId }];
   if (issue.assigneeOpenId) payload[F.assignee] = [{ id: issue.assigneeOpenId }];
-  return payload;
+  return orderPayload(payload, loadFieldOrder(config));
 }
 
 function buildUpdatePayload(args, config, fieldsByName) {

@@ -27,6 +27,8 @@ plugins/
 
 `config/feishu.json` 已按当前表结构配置。字段名或选项如果被改，脚本会在 `+field-list` 自检时报错。
 
+问题登记清单固定按目标表的实际字段顺序输出（取 `GET /open-apis/bitable/v1/apps/<base>/tables/<table>/fields` 的返回顺序，不用 `+field-list` 的随机顺序），顺序记录在 `config/feishu.json` 的 `feishu.fieldOrder`；dry-run 的 payload 也按该顺序打印。
+
 ## 使用
 
 1. 在插件市场添加本地市场：`/Users/tim/Desktop/设计走查登记表/plugins`
