@@ -1,6 +1,6 @@
 ---
 name: design-walkthrough
-description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到前端页面取实现值，对比出布局/交互偏差并截图，人工审核后通过飞书 CLI 登记到多维表格；设计稿缺失的规则登记为「待确认项」。Use when the user asks for design walkthrough, 走查, Figma 与前端页面对比, 登记走查问题, or wants to record UI issues into Feishu Bitable.
+description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到前端页面取实现值，对比出布局/交互偏差并截图，人工审核后通过飞书 CLI 登记到多维表格；登记阶段目标表不存在时按插件字段自动新建；设计稿缺失的规则登记为「待确认项」；登记完成后可按飞书问题登记表在飞书新建设计走查报告文档（不生成 .md）。Use when the user asks for design walkthrough, 走查, Figma 与前端页面对比, 登记走查问题, 生成设计走查报告/设计验收报告/验收报告, or wants to record UI issues into Feishu Bitable.
 ---
 
 # 设计走查登记
@@ -20,14 +20,16 @@ description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到
    ```bash
    LARK="$HOME/.zcode/tools/lark-cli/node_modules/.bin/lark-cli"
    PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
-   BASE_TOKEN=$(jq -r '.feishu.baseToken' "$PLUGIN_ROOT/config/feishu.json")
+   BASE_TOKEN=$(jq -r '.feishu.baseToken // empty' "$PLUGIN_ROOT/config/feishu.json")
+   TABLE_ID=$(jq -r '.feishu.tableId // empty' "$PLUGIN_ROOT/config/feishu.json")
    "$LARK" auth status
-   "$LARK" base +table-list --base-token "$BASE_TOKEN"
+   if [ -n "$BASE_TOKEN" ]; then "$LARK" base +table-list --base-token "$BASE_TOKEN"; fi
    ```
    - `auth status` 里 `identities.user.available` 必须为 true。
    - 如果 `needs_refresh`，调用一次 base 命令会自动刷新；失败则运行 `"$LARK" auth login`，把 QR/链接给用户扫码。
    - 主表：以 `config/feishu.json` 的 `feishu.baseToken` / `feishu.tableId` 为准；每个项目配置自己的走查表，插件不写死任何 Base/Table。
-   - 读取主表字段：用 `lark-cli api GET /open-apis/bitable/v1/apps/<baseToken>/tables/<tableId>/fields --params '{"page_size":100}'`，按 `data.items[].field_name` 记录表头顺序；后续「问题登记清单」按该顺序输出。
+   - **新项目允许 `baseToken` / `tableId` 为空**：不阻塞走查，登记阶段（§7）会自动新建 Base/表并回填配置。
+   - 表存在时读取字段：用 `lark-cli api GET /open-apis/bitable/v1/apps/<baseToken>/tables/<tableId>/fields --params '{"page_size":100}'`，按 `data.items[].field_name` 记录表头顺序；后续「问题登记清单」按该顺序输出。表不存在时先按 `templates/registry-base-fields.json` 的 17 列顺序输出，建表后再以实时字段为准。
    - 待确认表：同 Base 的「待确认项」，表名和字段 schema 定义在 `config/feishu.json` 的 `feishu.pending`；不存在时由脚本按该 schema 创建。
 
 2. **Figma**
@@ -380,7 +382,7 @@ description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到
 
 审核时给用户的「问题登记清单」必须严格按**本次配置表**的实际表头顺序输出，字段名与飞书表一致，不得增删列、重排或改名。插件是通用的，不写死任何表的列顺序。
 
-- 顺序来源：每次走查开始时，按 `config/feishu.json` 的 `feishu.baseToken` / `feishu.tableId` 调 `lark-cli api GET /open-apis/bitable/v1/apps/<baseToken>/tables/<tableId>/fields --params '{"page_size":100}'`，取 `data.items[].field_name` 的顺序。
+- 顺序来源：每次走查开始时，按 `config/feishu.json` 的 `feishu.baseToken` / `feishu.tableId` 调 `lark-cli api GET /open-apis/bitable/v1/apps/<baseToken>/tables/<tableId>/fields --params '{"page_size":100}'`，取 `data.items[].field_name` 的顺序；`baseToken` / `tableId` 为空或表不存在时，先按 `templates/registry-base-fields.json` 的 17 列顺序输出，登记阶段建表后再以实时字段为准。
 - **不要用 `+field-list` 的顺序，它每次返回都不稳定**；也不要照抄其他项目的表头。
 - `config/feishu.json` 的 `feishu.fieldOrder` 只是该项目的兜底记录；与实时顺序不一致时，以实时顺序为准并更新配置。默认顺序为：问题标题 → 问题编号 → 版本/批次 → 走查页面/模块 → 问题描述 → 问题截图 → 解决方案截图 → 问题类型 → 严重程度 → 状态 → 提出人 → 提出日期 → 负责人 → 计划修复日期 → 修复说明 → 复验结果 → 备注。
 - 未产生值的字段按默认填：`问题编号` = `系统生成`；`提出人` = 当前登录用户；`提出日期` = 今天（YYYY-MM-DD）；`状态` = `待处理`；`负责人` / `计划修复日期` / `解决方案截图` / `修复说明` / `复验结果` = `—`。
@@ -403,39 +405,137 @@ description: 读取 Figma 设计稿与交互说明建立设计基线，逐条到
 
 ## 7. 写入飞书
 
-1. 先 dry-run：
+**时机**：问题清单经人工审核、用户明确说「登记 / 确认写入」之后执行。先确认目标 Base/表，再 dry-run，最后写入；目标表不存在时在登记阶段自动新建。
+
+### 7.1 确认目标 Base 和表
+
+```bash
+LARK="$HOME/.zcode/tools/lark-cli/node_modules/.bin/lark-cli"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+BASE_TOKEN=$(jq -r '.feishu.baseToken // empty' "$PLUGIN_ROOT/config/feishu.json")
+TABLE_ID=$(jq -r '.feishu.tableId // empty' "$PLUGIN_ROOT/config/feishu.json")
+```
+
+1. `baseToken` 为空 → 走 §7.2 新建 Base。
+2. 有 `baseToken` → 查 Base：
+
    ```bash
-   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
-   node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
-     --input .walkthrough/reports/2026-11-10-list-draft.json \
-     --dry-run
+   "$LARK" base +base-get --base-token "$BASE_TOKEN" --as user
    ```
-   把将要写入的 payload、截图路径、待确认表结构给用户看。
 
-2. 用户确认后写入：
+   - 返回正常 → 进入第 3 步。
+   - 404 / Base 不存在 → 走 §7.2 新建 Base。
+   - 403 / 无权限 / `missing_scope` → 停止，把报错原文给用户，先解决授权或换身份；**不要用建新表绕过**。
+
+3. Base 存在 → 列出现有表：
+
    ```bash
-   node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
-     --input .walkthrough/reports/2026-11-10-list-draft.json \
-     --yes
+   "$LARK" base +table-list --base-token "$BASE_TOKEN" --as user
    ```
-   - `issues` 写入主表（走查问题登记）。
-   - `pending` 写入「待确认项」表。
-   - 脚本会先查重；同名问题默认跳过，确认要重复登记才加 `--allow-duplicate`。
-   - 创建记录后自动上传截图；上传失败会返回 `recordId` 和 `uploadError`，用同一个 recordId 重试，不要重建记录。
-   - 返回 `recordId` / `recordUrl` / `upload`，把链接给用户。
 
-3. 只登记用户确认的条目：可以直接编辑 draft JSON，删掉不登记的条目，再执行。
+   - `tableId` 在列表里 → 跳 §7.3，继续原登记流程；不要重复建表。
+   - `tableId` 不在列表，但存在名为「走查问题登记」的表 → 用该表的 `table_id` 回填配置，跳 §7.3。
+   - 没有「走查问题登记」表 → 走 §7.2 在现有 Base 里补表。
+   - 表存在但字段不匹配 → 按 dry-run 的字段自检报错修正字段或配置，不要重建表。
 
-4. 待确认表规则：
-   - 表名、字段 schema 定义在 `config/feishu.json` 的 `feishu.pending`。
-   - 配置了 `feishu.pending.tableId` 就直接用；没有配置则按表名在 Base 里查找。
-   - 找不到时：dry-run 只打印将创建的表结构；`--yes` 写入时才用该 schema 建表。
-   - 也可单独预建：
-     ```bash
-     node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" --ensure-pending-table --yes
-     ```
-     建好后把返回的 `tableId` 回填到 `feishu.pending.tableId`（可选，能加快后续查找）。
-   - 建表结构只来自插件配置，不读取任何外部文档或历史记录。
+### 7.2 目标不存在时新建
+
+字段唯一来源：`templates/registry-base-fields.json`，固定 17 列：问题标题、问题编号、版本/批次、走查页面/模块、问题描述、问题截图、解决方案截图、问题类型、严重程度、状态、提出人、提出日期、负责人、计划修复日期、修复说明、复验结果、备注。不再让用户确认字段清单，也不要求先 dry-run。
+
+先读字段模板：
+
+```bash
+FIELDS=$(cat "$PLUGIN_ROOT/templates/registry-base-fields.json")
+```
+
+**A. 新建 Base**（`baseToken` 为空或 Base 不存在时）：
+
+```bash
+"$LARK" base +base-create \
+  --name "<Base名>" \
+  --table-name "走查问题登记" \
+  --fields "$FIELDS" \
+  --folder-token "<folder_token>" \
+  --as user
+```
+
+- Base 名默认 `<项目名>-设计走查问题登记`；用户没给文件夹时删掉 `--folder-token` 行，落在「我的空间」。
+- 默认 `--as user`；只有用户明确要求才用 `--as bot`。
+- 从返回取 `app_token`（Base token）和首表 `table_id`；缺 table_id 时用 `base +table-list --base-token "<app_token>" --as user` 查。
+
+**B. 现有 Base 补表**（Base 存在但没有「走查问题登记」表时）：
+
+```bash
+"$LARK" base +table-create \
+  --base-token "$BASE_TOKEN" \
+  --name "走查问题登记" \
+  --fields "$FIELDS" \
+  --as user
+```
+
+**C. 补「待确认项」表**（不存在时；默认建）：
+
+```bash
+PENDING_FIELDS=$(jq -c '.feishu.pending.tableFields' "$PLUGIN_ROOT/config/feishu.json")
+
+"$LARK" base +table-create \
+  --base-token "<base_token>" \
+  --name "待确认项" \
+  --fields "$PENDING_FIELDS" \
+  --as user
+```
+
+- 已存在就跳过；字段 schema 只来自 `config/feishu.json` 的 `feishu.pending.tableFields`。
+
+**D. 回填配置**：
+
+1. 改前备份生效目录的 `config/feishu.json`：
+   `cp config/feishu.json config/feishu.json.bak-$(date +%Y%m%d-%H%M%S)`。
+2. 只改 `feishu.baseToken` / `feishu.tableId` / `feishu.baseUrl` / `feishu.pending.tableId`。
+3. `fieldNames` / `fieldOrder` / `pending.tableFields` 不动；`fieldOrder` 已包含全部 17 个字段。
+4. 新 Base 的 URL 从创建返回取；没有就按 `https://<domain>/base/<app_token>` 拼。
+
+完成后继续 §7.3，把本次确认的问题写入目标表；不要停在「表已建好」。
+
+### 7.3 dry-run
+
+```bash
+node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
+  --input .walkthrough/reports/2026-11-10-list-draft.json \
+  --dry-run
+```
+
+把将要写入的 payload、截图路径、待确认表结构给用户看。
+
+### 7.4 写入
+
+用户确认后：
+
+```bash
+node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
+  --input .walkthrough/reports/2026-11-10-list-draft.json \
+  --yes
+```
+
+- `issues` 写入主表（走查问题登记）。
+- `pending` 写入「待确认项」表。
+- 脚本会先查重；同名问题默认跳过，确认要重复登记才加 `--allow-duplicate`。
+- 创建记录后自动上传截图；上传失败会返回 `recordId` 和 `uploadError`，用同一个 recordId 重试，不要重建记录。
+- 返回 `recordId` / `recordUrl` / `upload`，把链接给用户。
+
+只登记用户确认的条目：可以直接编辑 draft JSON，删掉不登记的条目，再执行。
+
+### 7.5 待确认表规则
+
+- 表名、字段 schema 定义在 `config/feishu.json` 的 `feishu.pending`。
+- 配置了 `feishu.pending.tableId` 就直接用；没有配置则按表名在 Base 里查找。
+- 找不到时：dry-run 只打印将创建的表结构；`--yes` 写入时才用该 schema 建表。
+- 也可单独预建：
+  ```bash
+  node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" --ensure-pending-table --yes
+  ```
+  建好后把返回的 `tableId` 回填到 `feishu.pending.tableId`（可选，能加快后续查找）。
+- 建表结构只来自插件配置，不读取任何外部文档或历史记录。
 
 ## 8. 后续更新
 
@@ -455,7 +555,136 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 
 默认仍是 dry-run；不加 `--yes` 只打印 payload。
 
-## 9. 硬约束
+## 9. 设计走查报告（飞书文档）
+
+**触发**：用户说「生成设计走查报告」「生成设计验收报告」「出验收报告」「生成验收报告」时执行。这是插件的最后一个节点：走查、登记、修复完成后，读取飞书问题登记表，按 `templates/走查报告模版.md` 组织正文，**在飞书新建一篇文档**交付，不生成 `.md` 报告文件。只读问题登记表，不改记录。
+
+### 9.1 读取问题登记表
+
+1. 读配置：
+
+   ```bash
+   LARK="$HOME/.zcode/tools/lark-cli/node_modules/.bin/lark-cli"
+   PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}"
+   BASE_TOKEN=$(jq -r '.feishu.baseToken' "$PLUGIN_ROOT/config/feishu.json")
+   TABLE_ID=$(jq -r '.feishu.tableId' "$PLUGIN_ROOT/config/feishu.json")
+   ```
+
+   - 主表字段顺序按 `GET /open-apis/bitable/v1/apps/<BASE_TOKEN>/tables/<TABLE_ID>/fields` 的 `data.items[].field_name` 读取；报告列名与表一致，不写死、不照抄其他项目。
+   - 表名用 `GET /open-apis/bitable/v1/apps/<BASE_TOKEN>/tables` 匹配 `TABLE_ID` 得到；取不到就写 tableId。
+
+2. 拉全量记录（必须翻页取完）：
+
+   ```bash
+   "$LARK" api GET "/open-apis/bitable/v1/apps/$BASE_TOKEN/tables/$TABLE_ID/records" \
+     --params '{"page_size":100}' --as bot
+   ```
+
+   - 响应 `data.has_more=true` 时，带 `page_token` 继续取，直到 `has_more=false`。
+   - 默认用 `--as bot`；bot 读不到再用用户身份。用户身份报 `missing_scope` 时，按报错里的 `verification_url` 让用户授权，授权完成前不要编造数据。
+   - 只读接口；不要为了读数据去改表、建字段或写记录。
+
+3. 保存原始快照到快照目录：
+   `.walkthrough/reports/<YYYY-MM-DD>-<project-slug>-registry.json`
+   内容至少包含 `readAt`、`baseToken`、`tableId`、`filter`、`records`（原始 fields）。报告里的所有数字只从这份快照计算，不手工估算。
+
+4. 筛选：
+   - 用户给了版本/批次：只保留「版本/批次」匹配的记录。繁简/大小写不一致时先列出候选值让用户确认，不要自行归并。
+   - 用户没给：全表，报告筛选条件写「全表」。
+   - **排除示例记录**：`问题标题` 以「【示例】」「[示例]」开头的记录不计入统计，报告注明「已排除示例记录 N 条」。
+   - 筛选后 0 条：停止生成，告诉用户没有可统计的记录和当前筛选条件。
+
+5. 待确认项：读 `feishu.pending`（`tableId` 或按 `tableName` 查找）。存在且有记录时，按同一版本/批次筛选后放进 5.3；不存在或为 0 条时写「无。」。待确认项不计缺陷、不参与结论判定。
+
+### 9.2 统计口径
+
+**状态**：
+
+- 已关闭 = `状态` 为 `已关闭`。
+- 遗留 = 其余状态（`待处理` / `处理中` / `待验证`）。
+
+**等级**：取 `严重程度` 前缀 `P0` / `P1` / `P2` / `P3`，报告里保留表内原值（如 `P2-一般`）。
+
+**维度映射**（按 `问题类型`）：
+
+| 维度 | 问题类型 |
+| --- | --- |
+| UI 视觉一致性 | 视觉还原 |
+| UE 交互体验 | 交互体验、功能缺陷 |
+| 兼容适配 | 兼容适配 |
+| 性能与稳定体验 | 性能 |
+| 内容与可访问性 | 文案 |
+| 问题闭环 | 全部记录 |
+| 其他 | 其他（实际出现时才在 5.1 追加该行） |
+
+- 一条记录可含多个问题类型，维度计数会重复；5.1 必须注明「维度计数合计 ≠ 记录数」。
+- 5.1 的「结果」：该维度 0 条 → `不适用`；有记录且遗留 0 → `通过`；有遗留 → `发现问题`。「问题闭环」行按全部记录判断。
+- 5.2 排序：P0 → P3，同级按问题编号升序；列取报告模版定义并加「飞书记录」链接列。
+- 飞书记录链接：`<baseUrl>?table=<tableId>&record=<recordId>`。
+- 8.1 占比 = 该维度问题数 / 维度计数合计；保留 1 位小数。
+
+### 9.3 结论判定
+
+按顺序执行，不得为了结论好看而放宽：
+
+1. 读不到表、筛选后无记录、关键字段缺失 → **退回**。
+2. 存在未关闭 P0/P1 → **不通过**。
+3. 存在遗留 P2/P3：
+   - 每条遗留都有 `负责人` 和 `计划修复日期`，且用户明确提供了遗留批准记录（批准人 + 日期）→ **有条件通过**。
+   - 缺负责人、缺排期或缺批准记录 → **不通过**，结论摘要写明缺哪项。
+4. 无遗留（P0~P3 全部已关闭）→ **通过**。
+5. 模版里的「P2 均已评估不影响上线」必须有用户明确结论；没有就按遗留处理，不自行认定。
+
+- 批准人、日期、责任人只能来自表内数据或用户明确提供；没有就写「无」/「—」，不得编造。
+- 「检查项完成率」在本插件口径下 = 范围内记录均已登记状态；有记录缺状态字段时按退回处理。
+
+### 9.4 生成飞书文档
+
+1. 读模版：`$PLUGIN_ROOT/templates/走查报告模版.md`。
+2. 项目名：取记录「走查页面/模块」的共同首段（按 `/`、`／` 分隔）；取不到或存在多个项目时问用户，不要猜。
+3. 版本/批次：用户指定优先；全表时写「全表」。
+4. 编制人：默认 `lark-cli auth status` 的当前用户；用户指定优先。
+5. 文档标题：默认 `<项目名>走查报告`（例如「三号机走查报告」）；用户指定标题就用用户的。版本/批次写在正文，不塞进标题，除非用户要求。
+6. 填写规则：
+   - 所有 `【】` 必须替换；无数据填 `—`；删除「使用说明」区块。
+   - 报告数字与快照一致；生成后自检：各等级合计 = 记录数，已关闭 + 遗留 = 记录数，5.2 行数 = 记录数。
+   - 第七章只列 P0/P1 全部、P2 遗留、以及需带版上线的遗留项；没有时写「无。」。
+   - 8.2 原因归类必须带证据（问题类型/模块计数）；只能推断时标注「推测」；证据不足写「数据不足以归类」。
+   - 8.3 改进建议的完成时间：用户没给就写「待排期」，不得编日期。
+   - **不要保存 `.md` 报告文件**；模版只用于组织正文，最终交付物是飞书文档。
+7. 创建飞书文档（正文用 Markdown 从 stdin 传入）：
+
+   ```bash
+   "$LARK" docs +create \
+     --title "<项目名>走查报告" \
+     --doc-format markdown \
+     --content - \
+     --as user <<'REPORT_EOF'
+   <替换后的报告正文>
+   REPORT_EOF
+   ```
+
+   - 用户给了目标文件夹就加 `--parent-token "<folder_token>"`；没给就放「我的空间」。
+   - 默认 `--as user`；只有用户明确要求才用 `--as bot`。
+   - 从返回取 `data.document.document_id` / `data.document.url`；`ok=false` 时按报错修正，不要退回生成 `.md`。
+   - 只创建一次；失败重试前先确认没有已创建的文档，避免重复建多篇。
+8. 生成后给用户统计摘要、结论和飞书文档链接；保留 `registry.json` 原始快照（JSON，不含 `.md` 报告）。**不自动回写问题登记表，不修改记录状态。**
+
+### 9.5 报告输出
+
+```text
+设计走查报告：
+- 数据源：<表名>（<筛选条件>）
+- 记录：N 条（已排除示例 K 条）｜已关闭 x / 遗留 y
+- 等级：P0 a / P1 b / P2 c / P3 d（其中遗留 P0 a' ...）
+- 结论：通过 / 有条件通过 / 不通过 / 退回
+- 飞书文档：<url>
+- 文档 ID：<document_id>
+- 原始快照：<绝对路径>
+- 待确认项：N 条（未计入缺陷）/ 无
+```
+
+## 10. 硬约束
 
 - **基线唯一来源**：基线只能从当次 Figma 节点树/截图/交互说明生成；禁止把历史走查记录、旧问题清单、其他系统的验收标准当基线。
 - **不反推**：基线没写的规则，不得用通用经验补成「应该怎样」，更不得据此判缺陷。
@@ -476,8 +705,21 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 - **表头不写死**：清单列顺序每次按目标表实时读取（fields API），不照抄模板表或其他项目。
 - **字段自检**：`register-walkthrough.mjs` 会读 `+field-list` 校验字段和选项；失败时按报错修正，不要绕过。
 - **示例记录**：表里已有 `NO.001` 示例记录，未经确认不删除、不修改。
+- **报告只读**：生成设计走查报告只读问题登记表，只新建飞书文档；不写回、不改状态、不删记录、不建表。
+- **报告不落 .md**：交付物是飞书文档，不生成 `.md` 报告文件；模版只用于组织正文。
+- **统计来自快照**：报告数字只从本次 `registry.json` 快照计算；先落快照再写报告。
+- **结论由数据推导**：P0/P1 未关闭 → 不通过；有条件通过必须同时有责任人、排期和批准记录；数据不全 → 退回。
+- **报告不编造**：批准人、日期、责任人、完成时间、原因归类都不能凭空补；缺失写「无」/「—」/「待排期」，推断标「推测」。
+- **报告排除示例**：`问题标题` 以「【示例】」「[示例]」开头的记录不进统计，并在报告中注明排除数量。
+- **建表字段固定**：登记阶段自动建表只能按 `templates/registry-base-fields.json` 的 17 个字段、顺序、类型和选项创建；不得增删、重排或改选项，要改先问用户。
+- **建表合并进登记**：不单独跑建表节点；用户确认登记后先检查目标 Base/表，存在就直接写入，不存在才建，建完继续写入本次确认的问题。
+- **不重复建表**：只有 `baseToken`/`tableId` 为空或接口明确返回 404/表不存在时才建；403/权限错误先解决授权，不得用建新表绕过。
+- **自动建表不确认字段**：建表阶段不 dry-run、不让用户逐项确认字段；只补 Base 名和存放位置，用户没给就用默认值。
+- **自动建表默认用户身份**：默认 `--as user`；用 bot 建表必须用户明确同意，并说明落在机器人空间及授权问题。
+- **建表不写示例记录**：建表本身只建结构；建完继续 §7.3 写入本次人工确认的问题。
+- **配置只改生效目录**：回填 token 前先备份，只改 `baseToken` / `tableId` / `baseUrl` / `pending.tableId`；市场副本保持模板配置。
 
-## 10. 输出格式
+## 11. 输出格式
 
 结束时给用户：
 
@@ -503,6 +745,10 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 
 待确认项：
 - <缺失的规则>（已写入「待确认项」表 / 未写入）
+
+飞书登记表：
+- 目标表：<已有 / 本次新建>  <baseToken>/<tableId>
+- 待确认项表：<已有 / 本次新建 / 未建>
 
 已登记：
 - NO.xxx  <问题标题>  <recordUrl>

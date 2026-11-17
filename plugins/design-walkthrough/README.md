@@ -1,6 +1,6 @@
 # 设计走查登记插件
 
-读取当次 Figma 设计稿与交互说明建立「设计基线」，逐条到前端页面取「实现值」，差集登记为问题；设计稿缺失的规则先问用户补充，补不了则登记为「待确认项」。问题截图后经人工审核，通过飞书 CLI 写入多维表格。
+读取当次 Figma 设计稿与交互说明建立「设计基线」，逐条到前端页面取「实现值」，差集登记为问题；设计稿缺失的规则先问用户补充，补不了则登记为「待确认项」。问题截图后经人工审核，通过飞书 CLI 写入多维表格；登记阶段目标表不存在时自动按固定字段新建。登记完成后可读取飞书问题登记表，在飞书新建走查报告文档（不生成 `.md`）。
 
 ## 目录
 
@@ -10,8 +10,11 @@ plugins/
   design-walkthrough/
     .zcode-plugin/plugin.json      # 插件清单
     commands/走查.md               # /走查 命令
-    skills/design-walkthrough/     # 走查方法与飞书写入流程
+    commands/设计验收报告.md       # /设计验收报告 命令
+    skills/design-walkthrough/     # 走查方法、飞书写入/自动建表、验收报告流程
     scripts/register-walkthrough.mjs
+    templates/走查报告模版.md      # 走查报告正文模版（导入飞书文档）
+    templates/registry-base-fields.json  # 自动建表的 17 个字段定义
     config/feishu.json             # 飞书 Base/Table/字段映射
     examples/sample-draft.json     # dry-run 示例
 ```
@@ -21,6 +24,7 @@ plugins/
 - Base：`REMOVED`
 - Table：`REMOVED`（走查问题登记）
 - 待确认表：「待确认项」（同一 Base；表名和字段 schema 在 `config/feishu.json` 的 `feishu.pending`）
+- 新项目的 `baseToken` / `tableId` 可以留空；登记阶段会自动建表并回填配置。
 - 「解决方案截图」字段由人工上传方案图，插件不写入、不覆盖。
 - CLI：`~/.zcode/tools/lark-cli/node_modules/.bin/lark-cli`
 - 登录态：`lark-cli auth status`；失效时 `lark-cli auth login` 扫码。
@@ -35,7 +39,8 @@ plugins/
 2. 安装「设计走查登记」。
 3. 新建任务，输入 `/走查`，按提示给 Figma 页面/Frame、前端 URL、版本/批次。
 4. 走查先读 Figma 生成设计基线，逐条到前端取实现值；基线缺失的规则会先问你补充。
-5. 走查完成后先审核问题清单与待确认项；确认后才写入飞书。
+5. 走查完成后先审核问题清单与待确认项；确认后才写入飞书。目标表不存在时，登记阶段会按固定 17 列自动新建 Base/表并回填配置，然后继续写入。
+6. 修复/复验后输入 `/设计验收报告`（或直接说「生成设计走查报告」），读取飞书问题登记表并在飞书新建 `<项目名>走查报告` 文档；不生成 `.md`。
 
 也可以直接运行登记脚本：
 
@@ -56,6 +61,27 @@ node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
 node "$PLUGIN_ROOT/scripts/register-walkthrough.mjs" \
   --ensure-pending-table --yes
 ```
+
+## 登记时自动建表
+
+用户确认登记后、执行写入前，插件会检查 `config/feishu.json` 的目标 Base/表：
+
+- 表存在 → 直接继续 dry-run 和写入，不重复建表。
+- `baseToken` / `tableId` 为空，或接口明确返回 404/表不存在 → 自动按 `templates/registry-base-fields.json` 创建 17 列（问题标题、问题编号、版本/批次、走查页面/模块、问题描述、问题截图、解决方案截图、问题类型、严重程度、状态、提出人、提出日期、负责人、计划修复日期、修复说明、复验结果、备注）。
+- Base 不存在 → 新建 Base（默认 `<项目名>-设计走查问题登记`，没给文件夹就落「我的空间」，`--as user`）；Base 存在但没有目标表 → 在现有 Base 里补表。
+- 同时补齐「待确认项」表，备份并回填生效目录 `config/feishu.json` 的 `baseToken` / `tableId` / `baseUrl` / `pending.tableId`；然后继续写入本次确认的问题。
+- 建表不确认字段、不 dry-run；403/权限错误先解决授权，不用建新表绕过。
+
+## 设计走查报告（飞书文档）
+
+输入 `/设计验收报告`（或「生成设计走查报告」）后，插件读取 `config/feishu.json` 指定的问题登记表：
+
+- 翻页拉全量记录，优先 `--as bot`；先落快照 `.walkthrough/reports/<日期>-<project>-registry.json`，报告数字只从快照计算。
+- 默认统计全表；用户给了版本/批次就按该值筛选。`问题标题` 以「【示例】」开头的记录排除，并注明数量。
+- 按 `templates/走查报告模版.md` 组织正文，用 `docs +create --doc-format markdown --content -` 在飞书新建文档；默认标题 `<项目名>走查报告`，**不生成 `.md` 报告文件**。
+- 维度按「问题类型」映射：视觉还原→UI、交互体验/功能缺陷→UE、兼容适配→AD、性能→PE、文案→CA、全部记录→问题闭环。
+- 结论由数据推导：未关闭 P0/P1 → 不通过；P2/P3 遗留需负责人、排期和用户提供的批准记录才可有条件通过；无遗留才通过；数据不全退回。
+- 只读问题登记表，不写回、不改状态、不建表；批准人/日期/责任人/完成时间不得编造；创建后把飞书文档链接给用户。
 
 ## 草稿格式
 

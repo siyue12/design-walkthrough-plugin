@@ -1,0 +1,118 @@
+[
+  {
+    "type": "text",
+    "name": "问题标题",
+    "description": "一句话概括问题"
+  },
+  {
+    "type": "auto_number",
+    "name": "问题编号",
+    "description": "系统自动生成，格式 NO.001",
+    "style": {
+      "rules": [
+        { "type": "text", "text": "NO." },
+        { "type": "incremental_number", "length": 3 }
+      ]
+    }
+  },
+  {
+    "type": "text",
+    "name": "版本/批次",
+    "description": "所属版本或走查批次"
+  },
+  {
+    "type": "text",
+    "name": "走查页面/模块",
+    "description": "问题所在页面或功能模块"
+  },
+  {
+    "type": "text",
+    "name": "问题描述",
+    "description": "现象、复现路径、期望结果"
+  },
+  {
+    "type": "attachment",
+    "name": "问题截图",
+    "description": "每个问题点一张红框截图"
+  },
+  {
+    "type": "attachment",
+    "name": "解决方案截图",
+    "description": "由人工上传修复方案图，插件不写入、不覆盖"
+  },
+  {
+    "type": "select",
+    "name": "问题类型",
+    "multiple": true,
+    "options": [
+      { "name": "视觉还原", "hue": "Blue", "lightness": "Lighter" },
+      { "name": "交互体验", "hue": "Turquoise", "lightness": "Lighter" },
+      { "name": "文案", "hue": "Yellow", "lightness": "Lighter" },
+      { "name": "功能缺陷", "hue": "Red", "lightness": "Lighter" },
+      { "name": "兼容适配", "hue": "Purple", "lightness": "Lighter" },
+      { "name": "性能", "hue": "Orange", "lightness": "Lighter" },
+      { "name": "其他", "hue": "Gray", "lightness": "Lighter" }
+    ]
+  },
+  {
+    "type": "select",
+    "name": "严重程度",
+    "multiple": false,
+    "options": [
+      { "name": "P0-致命", "hue": "Red", "lightness": "Dark" },
+      { "name": "P1-严重", "hue": "Orange", "lightness": "Standard" },
+      { "name": "P2-一般", "hue": "Yellow", "lightness": "Standard" },
+      { "name": "P3-建议", "hue": "Gray", "lightness": "Light" }
+    ]
+  },
+  {
+    "type": "select",
+    "name": "状态",
+    "multiple": false,
+    "default_value": ["待处理"],
+    "options": [
+      { "name": "待处理", "hue": "Gray", "lightness": "Lighter" },
+      { "name": "处理中", "hue": "Blue", "lightness": "Standard" },
+      { "name": "待验证", "hue": "Orange", "lightness": "Standard" },
+      { "name": "已关闭", "hue": "Green", "lightness": "Standard" }
+    ]
+  },
+  {
+    "type": "user",
+    "name": "提出人",
+    "multiple": false
+  },
+  {
+    "type": "datetime",
+    "name": "提出日期",
+    "style": { "format": "yyyy-MM-dd" }
+  },
+  {
+    "type": "user",
+    "name": "负责人",
+    "multiple": false
+  },
+  {
+    "type": "datetime",
+    "name": "计划修复日期",
+    "style": { "format": "yyyy-MM-dd" }
+  },
+  {
+    "type": "text",
+    "name": "修复说明"
+  },
+  {
+    "type": "select",
+    "name": "复验结果",
+    "multiple": false,
+    "options": [
+      { "name": "待复验", "hue": "Gray", "lightness": "Lighter" },
+      { "name": "通过", "hue": "Green", "lightness": "Standard" },
+      { "name": "不通过", "hue": "Red", "lightness": "Standard" }
+    ]
+  },
+  {
+    "type": "text",
+    "name": "备注"
+  }
+]
