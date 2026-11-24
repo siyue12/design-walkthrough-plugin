@@ -1,5 +1,5 @@
 {
-  "name": "dev-design-walkthrough-local",
+  "name": "design-walkthrough-plugin",
   "plugins": [
     {
       "name": "design-walkthrough",
