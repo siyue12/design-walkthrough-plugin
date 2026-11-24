@@ -1,8 +1,8 @@
 {
   "feishu": {
-    "baseToken": "REMOVED",
-    "tableId": "REMOVED",
-    "baseUrl": "https://REMOVED.feishu.cn/base/REMOVED",
+    "baseToken": "",
+    "tableId": "",
+    "baseUrl": "",
     "larkCliPath": "~/.zcode/tools/lark-cli/node_modules/.bin/lark-cli",
     "defaultVersion": "v1.0 走查第1轮",
     "reporterOpenId": null,

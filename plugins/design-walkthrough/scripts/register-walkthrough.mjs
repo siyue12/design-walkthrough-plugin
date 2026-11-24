@@ -62,7 +62,11 @@ function loadConfig() {
   const feishu = config.feishu || {};
   const required = ["baseToken", "tableId", "larkCliPath", "fieldNames"];
   for (const key of required) {
-    if (!feishu[key]) throw new Error(`config/feishu.json 缺少 feishu.${key}`);
+    if (!feishu[key]) {
+      throw new Error(
+        `config/feishu.json 缺少 feishu.${key}。新项目允许留空：登记阶段会自动新建 Base/表并回填配置；出现本错误说明尚未回填，请先完成登记阶段建表。`,
+      );
+    }
   }
   const pending = feishu.pending || {};
   for (const key of ["tableName", "tableFields", "fieldNames"]) {

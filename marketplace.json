@@ -3,7 +3,7 @@
   "plugins": [
     {
       "name": "design-walkthrough",
-      "source": "./design-walkthrough",
+      "source": "./plugins/design-walkthrough",
       "version": "0.1.9",
       "description": "读取当次 Figma 设计稿建立基线，逐条对比前端实现值，登记走查问题与待确认项到飞书多维表格；登记时目标表不存在可自动新建，并可在飞书新建设计走查报告文档",
       "displayName": "设计走查登记",
@@ -13,7 +13,8 @@
       "description_i18n": {
         "zh-CN": "读取当次 Figma 设计稿建立基线，逐条对比前端实现值，登记走查问题与待确认项到飞书多维表格；登记时目标表不存在可自动新建，并可在飞书新建设计走查报告文档"
       },
-      "category": "productivity"
+      "category": "productivity",
+      "icon": "https://fastly.jsdelivr.net/gh/siyue12/plugin-assets@main/walkthrough.svg"
     }
   ]
 }
